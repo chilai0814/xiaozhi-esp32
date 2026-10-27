@@ -349,10 +349,10 @@ private:
         // ===== 屏幕切换工具（语音可调用）=====
         mcp_server.AddTool(
             "self.disp.switch",
-            "Switch display page between weather, music, and pomodoro.\n"
-            "Use when user says: '切到音乐页', '打开天气页', '切换屏幕', '打开番茄钟页面', 'switch screen'.\n"
+            "Switch display page between weather, music, pomodoro, and weather detail.\n"
+            "Use when user says: '切到音乐页', '打开天气页', '切换屏幕', '打开番茄钟页面', '打开天气详情', 'switch screen'.\n"
             "Args:\n"
-            "  `mode`: 'toggle' | 'music' | 'weather' | 'pomodoro' (default: 'toggle')",
+            "  `mode`: 'toggle' | 'music' | 'weather' | 'pomodoro' | 'weather_detail' (default: 'toggle')",
             PropertyList({
                 Property("mode", kPropertyTypeString, std::string("toggle"))
             }),
@@ -380,12 +380,15 @@ private:
                     display_->SwitchToWeatherPage();
                 } else if (mode == "pomodoro") {
                     display_->SwitchToPomodoroPage();
+                } else if (mode == "weather_detail") {
+                    display_->SwitchToWeatherDetailPage();
                 } else {
-                    return std::string("参数 mode 无效，请使用 toggle/music/weather/pomodoro");
+                    return std::string("参数 mode 无效，请使用 toggle/music/weather/pomodoro/weather_detail");
                 }
 
                 if (display_->IsMusicMode()) return std::string("已切换到音乐页");
                 if (display_->IsPomodoroMode()) return std::string("已切换到番茄钟页");
+                if (display_->IsWeatherDetailMode()) return std::string("已切换到天气详情页");
                 return std::string("已切换到天气页");
             }
         );

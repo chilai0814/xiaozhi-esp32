@@ -34,6 +34,7 @@ private:
         MODE_WEATHER = 0,
         MODE_MUSIC = 1,
         MODE_POMODORO = 2,
+        MODE_WEATHER_DETAIL = 3,  // 24h+7d 天气详情页
     };
     DisplayMode display_mode_ = MODE_WEATHER;
 
@@ -42,6 +43,23 @@ private:
     lv_obj_t *weather_page_ = nullptr;
     lv_obj_t *music_page_ = nullptr;
     lv_obj_t *pomodoro_page_ = nullptr;
+    lv_obj_t *weather_detail_page_ = nullptr;  // 24h+7d 详情页
+
+    // ===== 天气详情页 UI 组件（24h 柱状图 + 7 天列表）=====
+    lv_obj_t *wd_time_label_ = nullptr;
+    lv_obj_t *wd_title_label_ = nullptr;
+    lv_obj_t *wd_now_label_ = nullptr;
+    lv_obj_t *wd_wifi_icon_img_ = nullptr;
+    lv_obj_t *wd_battery_icon_img_ = nullptr;
+    lv_obj_t *wd_battery_pct_label_ = nullptr;
+    lv_obj_t *wd_hour_bar_[24] = {nullptr};
+    lv_obj_t *wd_hour_label_[24] = {nullptr};
+    lv_obj_t *wd_hour_tick_[4] = {nullptr};
+    lv_obj_t *wd_empty_hour_label_ = nullptr;
+    lv_obj_t *wd_day_label_[7] = {nullptr};
+    lv_obj_t *wd_text_label_[7] = {nullptr};
+    lv_obj_t *wd_temp_label_[7] = {nullptr};
+    lv_obj_t *wd_empty_daily_label_ = nullptr;
 
     // ===== 天气站 UI 组件 =====
     // 状态栏（右上角浮动胶囊）
@@ -120,11 +138,13 @@ private:
     // LVGL flush 回调（将 RGB565 转换为 1-bit 并刷新到 RLCD）
     static void Lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area, uint8_t * color_p);
 
-    // UI 创建（实现在 weather_ui.cc / music_ui.cc / pomodoro_ui.cc）
+    // UI 创建（实现在 weather_ui.cc / music_ui.cc / pomodoro_ui.cc / weather_detail_ui.cc）
     void SetupWeatherUI();
     void SetupMusicUI();
     void SetupPomodoroUI();
+    void SetupWeatherDetailUI();
     void ApplyDisplayMode();
+    void RefreshWeatherDetailDisplayInternal();  // 已持锁时内部刷新
     
     // 备忘录
     void LoadMemoFromNvs();   // 从 NVS 加载备忘录到 UI
@@ -176,7 +196,9 @@ public:
     void CycleDisplayMode();
     bool IsMusicMode() const { return display_mode_ == MODE_MUSIC; }
     bool IsPomodoroMode() const { return display_mode_ == MODE_POMODORO; }
+    bool IsWeatherDetailMode() const { return display_mode_ == MODE_WEATHER_DETAIL; }
     void SwitchToPomodoroPage();
+    void SwitchToWeatherDetailPage();
 
     // 番茄钟 UI 更新方法
     void UpdatePomodoroDisplay(const char* state_text, const char* countdown_text,

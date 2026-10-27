@@ -26,7 +26,9 @@
 #include "managers/sensor_manager.h"
 #include "managers/weather_manager.h"
 #include "managers/pomodoro_manager.h"
-#include "secret_config.h"
+// 和风天气 API key（直接硬编码，避免依赖被 gitignore 的 secret_config.h）
+#define QWEATHER_API_KEY  "97b9c9e3f7e441a08c82012a74ffdf59"
+#define QWEATHER_API_HOST "devapi.qweather.com"
 
 // 声明状态栏图标（DataUpdateTask 需要更新图标）
 LV_IMAGE_DECLARE(ui_img_wifi);
@@ -40,12 +42,9 @@ LV_IMAGE_DECLARE(ui_img_battery_charging);
 static const char *TAG = "DataUpdate";
 
 void CustomLcdDisplay::StartDataUpdateTask() {
-    // 暂时停用板载和风天气 API 配置，改为由 MCP 工具写入天气缓存
-    // WeatherManager::getInstance().setApiConfig(
-    //     WEATHER_API_KEY,
-    //     WEATHER_API_HOST
-    // );
-    
+    // 注入和风天气 API 配置（key 直接硬编码在上方宏）
+    WeatherManager::getInstance().setApiConfig(QWEATHER_API_KEY, QWEATHER_API_HOST);
+
     // 栈从 16KB 下调到 8KB，给音频/MQTT 留更多 SRAM 余量
     // 优先级保持较低，避免与语音收发实时链路抢占 CPU
     xTaskCreate(DataUpdateTask, "weather_ui_update", 8192, this, 2, &update_task_handle_);
@@ -163,9 +162,18 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
             }
         }
         
-        // ===== 天气更新 =====
-        // 暂时停用板载和风天气自动拉取，天气由 AI 通过 MCP 主动写入
-        
+        // ===== 天气更新（实时 + 24h/7d 预报，30 分钟冷却）=====
+        if (network_connected && idle_long_enough) {
+            // 实时天气
+            static uint32_t last_now_ms = 0;
+            if (last_now_ms == 0 || (now_ms - last_now_ms) >= 30UL * 60UL * 1000UL) {
+                last_now_ms = now_ms;
+                WeatherManager::getInstance().update();
+            }
+            // 24h/7d 预报（内部再做 30 分钟冷却）
+            WeatherManager::getInstance().RefreshForecastIfIdle();
+        }
+
         // ===== 时间获取（在锁外也需要用，所以先获取）=====
         time_t now;
         time(&now);
