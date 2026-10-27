@@ -5,8 +5,13 @@
 #include "cJSON.h"
 #include "zlib.h"
 #include <string.h>
+#include <stdlib.h>
 #include <algorithm>
 #include <cctype>
+#include <mutex>
+#include <vector>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *TAG = "WeatherManager";
 
@@ -18,6 +23,9 @@ static const int RESPONSE_BUFFER_SIZE = 8192;
 // GZIP 解压缓冲区（和风天气 API 默认返回 gzip 压缩数据）
 static char* decompressed_buffer = NULL;
 static const int DECOMPRESSED_BUFFER_SIZE = 8192;
+
+// 预报拉取冷却：30 分钟
+static const uint32_t FORECAST_COOLDOWN_MS = 30UL * 60UL * 1000UL;
 
 esp_err_t WeatherManager::http_event_handler(esp_http_client_event_t *evt) {
     switch(evt->event_id) {
@@ -257,4 +265,207 @@ void WeatherManager::parseWeatherJson(const char* json_data) {
         }
     }
     cJSON_Delete(root);
+}
+
+// ========================================================================
+// 24h / 7d 预报扩展
+// ========================================================================
+
+static const char* JStr(cJSON* obj, const char* key) {
+    if (!obj) return nullptr;
+    cJSON* v = cJSON_GetObjectItem(obj, key);
+    return (v && cJSON_IsString(v)) ? v->valuestring : nullptr;
+}
+
+static std::string ExtractHour(const std::string& fx_time) {
+    size_t p = fx_time.find('T');
+    if (p != std::string::npos && fx_time.size() >= p + 6) {
+        return fx_time.substr(p + 1, 5);
+    }
+    return fx_time.substr(0, 5);
+}
+
+cJSON* WeatherManager::PerformGetForecast(const char* url) {
+    if (!response_buffer || !decompressed_buffer) return nullptr;
+
+    response_len = 0;
+    memset(response_buffer, 0, RESPONSE_BUFFER_SIZE);
+
+    esp_http_client_config_t cfg = {};
+    cfg.url = url;
+    cfg.event_handler = http_event_handler;
+    cfg.timeout_ms = 15000;
+    cfg.crt_bundle_attach = esp_crt_bundle_attach;
+
+    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    esp_http_client_set_header(client, "Host", api_host_.c_str());
+    esp_http_client_set_header(client, "User-Agent", "ESP32-Weather-Station");
+    esp_http_client_set_header(client, "Accept-Encoding", "gzip");
+
+    esp_err_t err = esp_http_client_perform(client);
+    int status = esp_http_client_get_status_code(client);
+
+    cJSON* root = nullptr;
+    if (err == ESP_OK && status == 200 && response_len > 0) {
+        int d_len = 0;
+        const char* json = nullptr;
+        if (decompress_gzip_safe((uint8_t*)response_buffer, response_len,
+                                 decompressed_buffer, DECOMPRESSED_BUFFER_SIZE, &d_len)) {
+            json = decompressed_buffer;
+        } else {
+            response_buffer[response_len] = '\0';
+            json = response_buffer;
+        }
+        root = cJSON_Parse(json);
+        if (!root) {
+            ESP_LOGW(TAG, "预报 JSON 解析失败 (len=%d)", response_len);
+        }
+    } else {
+        ESP_LOGW(TAG, "预报请求失败 (err=%d, status=%d)", err, status);
+    }
+    esp_http_client_cleanup(client);
+    return root;
+}
+
+bool WeatherManager::ResolveLocation(double& lat, double& lon) {
+    if (api_key_.empty() || api_host_.empty()) return false;
+
+    char geo_url[256];
+    snprintf(geo_url, sizeof(geo_url),
+             "https://%s/geo/v2/city/lookup?location=auto_ip&key=%s",
+             api_host_.c_str(), api_key_.c_str());
+
+    cJSON* root = PerformGetForecast(geo_url);
+    if (!root) return false;
+
+    bool ok = false;
+    cJSON* code = cJSON_GetObjectItem(root, "code");
+    if (code && cJSON_IsString(code) && strcmp(code->valuestring, "200") == 0) {
+        cJSON* arr = cJSON_GetObjectItem(root, "location");
+        if (cJSON_IsArray(arr) && cJSON_GetArraySize(arr) > 0) {
+            cJSON* first = cJSON_GetArrayItem(arr, 0);
+            const char* lat_s = JStr(first, "lat");
+            const char* lon_s = JStr(first, "lon");
+            if (lat_s && lon_s) {
+                lat = atof(lat_s);
+                lon = atof(lon_s);
+                ok = true;
+                ESP_LOGI(TAG, "预报定位成功: (%.4f, %.4f)", lat, lon);
+            }
+        }
+    }
+    cJSON_Delete(root);
+    return ok;
+}
+
+bool WeatherManager::FetchHourly() {
+    char url[512];
+    snprintf(url, sizeof(url),
+             "https://%s/v7/24h?location=%.4f,%.4f&key=%s&lang=zh",
+             api_host_.c_str(), cached_lon_, cached_lat_, api_key_.c_str());
+
+    cJSON* root = PerformGetForecast(url);
+    if (!root) return false;
+
+    bool ok = false;
+    cJSON* code = cJSON_GetObjectItem(root, "code");
+    if (code && cJSON_IsString(code) && strcmp(code->valuestring, "200") == 0) {
+        cJSON* arr = cJSON_GetObjectItem(root, "hourly");
+        if (cJSON_IsArray(arr)) {
+            int n = cJSON_GetArraySize(arr);
+            std::vector<HourlyWeather> local;
+            for (int i = 0; i < n && (int)local.size() < 24; i++) {
+                cJSON* item = cJSON_GetArrayItem(arr, i);
+                const char* ft = JStr(item, "fxTime");
+                const char* tp = JStr(item, "temp");
+                const char* tx = JStr(item, "text");
+                if (!ft || !tp || !tx) continue;
+                local.push_back({ExtractHour(ft), tp, tx});
+            }
+            if (!local.empty()) {
+                std::lock_guard<std::mutex> lk(forecast_mutex_);
+                hourly_.swap(local);
+                ok = true;
+                ESP_LOGI(TAG, "24h 预报已更新（%d 条）", (int)hourly_.size());
+            }
+        }
+    }
+    cJSON_Delete(root);
+    return ok;
+}
+
+bool WeatherManager::FetchDaily() {
+    char url[512];
+    snprintf(url, sizeof(url),
+             "https://%s/v7/7d?location=%.4f,%.4f&key=%s&lang=zh",
+             api_host_.c_str(), cached_lon_, cached_lat_, api_key_.c_str());
+
+    cJSON* root = PerformGetForecast(url);
+    if (!root) return false;
+
+    bool ok = false;
+    cJSON* code = cJSON_GetObjectItem(root, "code");
+    if (code && cJSON_IsString(code) && strcmp(code->valuestring, "200") == 0) {
+        cJSON* arr = cJSON_GetObjectItem(root, "daily");
+        if (cJSON_IsArray(arr)) {
+            int n = cJSON_GetArraySize(arr);
+            std::vector<DailyWeather> local;
+            for (int i = 0; i < n && (int)local.size() < 7; i++) {
+                cJSON* item = cJSON_GetArrayItem(arr, i);
+                const char* date = JStr(item, "fxDate");
+                const char* text = JStr(item, "textDay");
+                const char* tmin = JStr(item, "tempMin");
+                const char* tmax = JStr(item, "tempMax");
+                if (!date || !text || !tmin || !tmax) continue;
+                local.push_back({date, text, tmin, tmax});
+            }
+            if (!local.empty()) {
+                std::lock_guard<std::mutex> lk(forecast_mutex_);
+                daily_.swap(local);
+                ok = true;
+                ESP_LOGI(TAG, "7d 预报已更新（%d 条）", (int)daily_.size());
+            }
+        }
+    }
+    cJSON_Delete(root);
+    return ok;
+}
+
+bool WeatherManager::FetchForecast() {
+    if (api_key_.empty() || api_host_.empty()) {
+        ESP_LOGW(TAG, "预报 API 未配置，跳过");
+        return false;
+    }
+
+    if (!location_valid_) {
+        double lat = cached_lat_, lon = cached_lon_;
+        if (ResolveLocation(lat, lon)) {
+            cached_lat_ = lat;
+            cached_lon_ = lon;
+            location_valid_ = true;
+        }
+    }
+
+    bool h_ok = FetchHourly();
+    bool d_ok = FetchDaily();
+    return h_ok && d_ok;
+}
+
+bool WeatherManager::RefreshForecastIfIdle() {
+    uint32_t now_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    if (last_attempt_ms_ != 0 && (now_ms - last_attempt_ms_ < FORECAST_COOLDOWN_MS)) {
+        return false;
+    }
+    last_attempt_ms_ = now_ms;
+    return FetchForecast();
+}
+
+std::vector<HourlyWeather> WeatherManager::GetHourly() const {
+    std::lock_guard<std::mutex> lk(forecast_mutex_);
+    return hourly_;
+}
+
+std::vector<DailyWeather> WeatherManager::GetDaily() const {
+    std::lock_guard<std::mutex> lk(forecast_mutex_);
+    return daily_;
 }
