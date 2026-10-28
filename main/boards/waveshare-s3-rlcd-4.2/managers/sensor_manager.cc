@@ -1,8 +1,11 @@
 #include "sensor_manager.h"
-#include "../secret_config.h"
 #include "esp_log.h"
 #include "esp_sntp.h"
 #include "esp_netif_sntp.h"
+
+// 时区/NTP 硬编码（避免依赖被 gitignore 的 secret_config.h）
+#define TIMEZONE_STRING   "CST-8"
+#define NTP_SERVER        "ntp.aliyun.com"
 #include <string.h>
 #include <sys/time.h>
 
