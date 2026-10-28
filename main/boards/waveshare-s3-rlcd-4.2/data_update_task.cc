@@ -26,9 +26,11 @@
 #include "managers/sensor_manager.h"
 #include "managers/weather_manager.h"
 #include "managers/pomodoro_manager.h"
-// 和风天气 API key（直接硬编码，避免依赖被 gitignore 的 secret_config.h）
+// 和风天气 API key + 时区/NTP（直接硬编码，避免依赖被 gitignore 的 secret_config.h）
 #define QWEATHER_API_KEY  "97b9c9e3f7e441a08c82012a74ffdf59"
 #define QWEATHER_API_HOST "devapi.qweather.com"
+#define TIMEZONE_STRING   "CST-8"
+#define NTP_SERVER        "ntp.aliyun.com"
 
 // 声明状态栏图标（DataUpdateTask 需要更新图标）
 LV_IMAGE_DECLARE(ui_img_wifi);
