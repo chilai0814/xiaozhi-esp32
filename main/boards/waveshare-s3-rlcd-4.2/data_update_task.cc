@@ -26,6 +26,7 @@
 #include "managers/sensor_manager.h"
 #include "managers/weather_manager.h"
 #include "managers/pomodoro_manager.h"
+#include "managers/alarm_manager.h"
 // 和风天气 API key + 时区/NTP（直接硬编码，避免依赖被 gitignore 的 secret_config.h）
 #define QWEATHER_API_KEY  "97b9c9e3f7e441a08c82012a74ffdf59"
 #define QWEATHER_API_HOST "api.qweather.com"
@@ -219,6 +220,7 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                 if (self->time_label_) lv_label_set_text(self->time_label_, time_buf);
                 if (self->music_time_label_) lv_label_set_text(self->music_time_label_, time_buf);
                 if (self->pomo_time_label_) lv_label_set_text(self->pomo_time_label_, time_buf);
+                if (self->wd_time_label_) lv_label_set_text(self->wd_time_label_, time_buf);
 
                 const char *weeks_en[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
                 if (self->day_label_) lv_label_set_text(self->day_label_, weeks_en[timeinfo.tm_wday]);
@@ -234,6 +236,10 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
 
         // ===== 备忘闹钟检查（在锁外执行，避免长时间持锁）=====
         if (minute_changed) {
+            // 闹钟到点检查
+            if (time_synced) {
+                AlarmManager::getInstance().CheckAlarms();
+            }
             if (time_synced) {
                 Settings memo_rd("memo", false);
                 std::string memo_json = memo_rd.GetString("items", "");
@@ -382,6 +388,9 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                         if (self->pomo_battery_icon_img_) {
                             lv_image_set_src(self->pomo_battery_icon_img_, icon_src);
                         }
+                        if (self->wd_battery_icon_img_) {
+                            lv_image_set_src(self->wd_battery_icon_img_, icon_src);
+                        }
                         last_icon_mode = icon_mode;
                     }
 
@@ -391,6 +400,7 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                         lv_label_set_text(self->battery_pct_label_, bat_buf);
                         if (self->music_battery_pct_label_) lv_label_set_text(self->music_battery_pct_label_, bat_buf);
                         if (self->pomo_battery_pct_label_) lv_label_set_text(self->pomo_battery_pct_label_, bat_buf);
+                        if (self->wd_battery_pct_label_) lv_label_set_text(self->wd_battery_pct_label_, bat_buf);
                         last_battery_level = cached_battery_level;
                     }
 
@@ -429,6 +439,9 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                     }
                     if (self->pomo_wifi_icon_img_) {
                         lv_image_set_src(self->pomo_wifi_icon_img_, wifi_src);
+                    }
+                    if (self->wd_wifi_icon_img_) {
+                        lv_image_set_src(self->wd_wifi_icon_img_, wifi_src);
                     }
                     last_wifi_state = ds;
                 }
