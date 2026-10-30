@@ -361,7 +361,7 @@ bool WeatherManager::ResolveLocation(double& lat, double& lon) {
 bool WeatherManager::FetchHourly() {
     char url[512];
     snprintf(url, sizeof(url),
-             "https://%s/v7/24h?location=%.4f,%.4f&key=%s&lang=zh",
+             "https://%s/v7/weather/24h?location=%.4f,%.4f&key=%s&lang=zh",
              api_host_.c_str(), cached_lon_, cached_lat_, api_key_.c_str());
 
     cJSON* root = PerformGetForecast(url);
@@ -397,7 +397,7 @@ bool WeatherManager::FetchHourly() {
 bool WeatherManager::FetchDaily() {
     char url[512];
     snprintf(url, sizeof(url),
-             "https://%s/v7/7d?location=%.4f,%.4f&key=%s&lang=zh",
+             "https://%s/v7/weather/7d?location=%.4f,%.4f&key=%s&lang=zh",
              api_host_.c_str(), cached_lon_, cached_lat_, api_key_.c_str());
 
     cJSON* root = PerformGetForecast(url);

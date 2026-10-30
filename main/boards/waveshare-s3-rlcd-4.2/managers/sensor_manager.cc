@@ -77,33 +77,35 @@ void SensorManager::syncNtpTime() {
     // 同步前确保时区设置正确（防止被 ota.cc 的 settimeofday 等操作干扰）
     setenv("TZ", TIMEZONE_STRING, 1);
     tzset();
-    
-    ESP_LOGI(TAG, "正在同步 NTP 时间...");
-    esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG(NTP_SERVER);
+
+    ESP_LOGI(TAG, "正在同步 NTP时间...");
+    // 用多个 NTP 服务器，提高成功率
+    esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG_MULTIPLE(3,
+        ESP_SNTP_SERVER_LIST("ntp.aliyun.com", "cn.ntp.org.cn", "pool.ntp.org"));
     esp_netif_sntp_init(&config);
 
     int retry = 0;
-    while (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(2000)) != ESP_OK && ++retry < 5) {
-        ESP_LOGI(TAG, "等待 NTP 响应... (%d/5)", retry);
+    while (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(5000)) != ESP_OK && ++retry < 10) {
+        ESP_LOGI(TAG, "等待 NTP 响应... (%d/10)", retry);
     }
 
-    if (retry < 5) {
+    if (retry < 10) {
         // NTP 同步成功后再次确认时区（以防其他模块覆盖）
         setenv("TZ", TIMEZONE_STRING, 1);
         tzset();
-        
+
         time_t now;
         struct tm timeinfo;
         time(&now);
         localtime_r(&now, &timeinfo);
         setRtcTime(&timeinfo); // 同步到硬件 RTC，断电后也能保持时间
-        ESP_LOGI(TAG, "NTP 同步成功: %04d-%02d-%02d %02d:%02d:%02d", 
+        ESP_LOGI(TAG, "NTP 同步成功: %04d-%02d-%02d %02d:%02d:%02d",
                  timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
                  timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
     } else {
         ESP_LOGW(TAG, "NTP 同步失败");
     }
-    
+
     esp_netif_sntp_deinit();
 }
 
